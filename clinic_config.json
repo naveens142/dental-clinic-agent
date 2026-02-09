@@ -1,0 +1,41 @@
+{
+  "doctor": {
+    "name": "Dr.David Mishra DDS, MDS (Oral & Maxillofacial Surgery)",
+    "specialization": "Comprehensive dental care including cosmetic dentistry, implants and orthodontics"
+  },
+  "clinic": {
+    "name": "ToothFairy Dental Clinic",
+    "address": "Shanti Dazzle, 607, near Agrawal Public School, Scheme No 140, Indore, Madhya Pradesh",
+    "hours": "Monday to Friday: 9:00 AM - 6:00 PM\nSaturday: 9:00 AM - 2:00 PM\nSunday: Closed\nEmergency: 24/7 (Call ahead)",
+    "phone": "+91-80-1234-5678",
+    "emergency": "+91-98765-43210",
+    "email": "info@toothfairydental.in",
+    "website": "www.toothfairydental.in"
+  },
+  "services": [
+    "Comprehensive Dental Examinations",
+    "Teeth Cleaning & Polishing",
+    "Dental Implants",
+    "Root Canal Treatment",
+    "Teeth Whitening & Cosmetic Dentistry",
+    "Orthodontics (Braces & Aligners)",
+    "Wisdom Tooth Extraction",
+    "Pediatric Dental Care",
+    "Dentures & Crowns",
+    "Emergency Dental Care"
+  ],
+  "fees": {
+    "general_consultation": "₹500",
+    "followup": "₹300",
+    "emergency": "₹800",
+    "surgical_consultation": "₹1000"
+  },
+  "policies": {
+    "appointment_info": "Appointments recommended but walk-ins accepted based on availability",
+    "arrival_time": "Please arrive 15 minutes before your scheduled time",
+    "cancellation": "Cancellations must be made 24 hours in advance",
+    "payment_methods": "Cash, Credit/Debit Cards, UPI, Insurance accepted",
+    "insurance": "Cashless facility available for major insurance providers",
+    "what_to_bring": "Previous dental records and X-rays, Insurance card (if applicable), Photo ID proof, List of current medications"
+  }
+}

@@ -1,0 +1,183 @@
+# Python Virtual Environment
+myenv/
+venv/
+env/
+ENV/
+.venv
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Environment Variables
+.env
+.env.local
+.env.*.local
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+.project
+.pydevproject
+.settings/
+
+# Testing & Pytest
+.pytest_cache/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+htmlcov/
+
+# LiveKit & Development
+*.log
+logs/
+*.lk.log
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# OS Files
+Thumbs.db
+.AppleDouble
+.LSOverride
+
+# Local Development
+local_settings.py
+*.pid
+.env.bak
+
+# Temporary Files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Audio/Video Cache (LiveKit)
+*.wav
+*.mp3
+*.webm
+*.opus
+
+# KMS Directory (credentials & keys)
+KMS/
+*.key
+*.pem
+
+# Node modules (if any frontend)
+node_modules/
+package-lock.json
+npm-debug.log
+
+# Docker
+.docker/
+docker-compose.override.yml
+
+# Cloud Deployment
+.railway/
+.render/
+.netlify/
+*.hcl
+terraform.tfstate*
+.env.production
+.env.staging
+
+# Database Backups & Dumps
+*.sql
+*.sql.gz
+*.dump
+*.backup
+
+# Cloud Provider Credentials (Aiven, AWS, etc)
+*credentials*
+*secret*
+*.pem
+*.key
+*.crt
+service-account*.json
+
+# CI/CD
+.github/workflows/secrets
+.gitlab-ci.yml.bak
+
+# Misc
+.DS_Store
+*.pyc
+dist/
+build/
+node_modules/
+
+# LLM/ML Model files (if cached)
+models/
+*.bin
+*.pt
+*.pth
+
+# Jupyter Notebooks (local runs)
+.ipynb_checkpoints/
+*.ipynb
+
+# Pycache in any subdirectory
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Test reports & artifacts
+test_results/
+reports/
+*.html
+htmlcov/
+
+# VS Code specific
+.vscode/settings.json
+.vscode/launch.json
+.vscode/extensions.json
+
+# FastAPI specific
+.asgi/
+
+# Database backups & dumps
+*.sql.backup
+*.sql.gz
+
+# Session & cache files
+*.cache
+session_*.json
+cache/
+
+# OS temp files
+.~*
+.directory

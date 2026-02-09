@@ -1,0 +1,57 @@
+version: '3.9'
+
+services:
+  dental-clinic-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dental-clinic-agent
+    environment:
+      # API Keys - Set in environment
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY}
+      - CARTESIA_API_KEY=${CARTESIA_API_KEY}
+      - LIVEKIT_URL=${LIVEKIT_URL}
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
+      
+      # Organization Configuration
+      - RECEPTIONIST_NAME=${RECEPTIONIST_NAME:-Neha}
+      - ORGANIZATION_NAME=${ORGANIZATION_NAME:-ToothFairy Dental Clinic}
+      - ORGANIZATION_TYPE=${ORGANIZATION_TYPE:-dental clinic}
+      
+      # Localization
+      - TIMEZONE=${TIMEZONE:-Asia/Kolkata}
+      - TIMEZONE_ABBR=${TIMEZONE_ABBR:-IST}
+      - PRIMARY_LANGUAGE=${PRIMARY_LANGUAGE:-English}
+      
+      # Database Configuration
+      - DB_HOST=${DB_HOST}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - DB_PORT=${DB_PORT:-3306}
+      
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      
+      # Python
+      - PYTHONUNBUFFERED=1
+    
+    volumes:
+      - ./clinic_config.json:/app/clinic_config.json:ro
+      - ./KMS/logs:/app/KMS/logs
+    
+    restart: unless-stopped
+    
+    # Uncomment for health checks (if API endpoint is added)
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 40s
+
+networks:
+  default:
+    name: dental-clinic-network
