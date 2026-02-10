@@ -1,10 +1,11 @@
 python-dotenv>=1.0.0
-livekit>=0.8.0
-livekit-agents>=0.8.0
+livekit>=1.0.0
+livekit-agents>=1.2.0
 livekit-plugins-deepgram>=0.8.0
 livekit-plugins-openai>=0.8.0
 livekit-plugins-cartesia>=0.8.0
-livekit-plugins-noise-cancellation>=0.8.0
+livekit-plugins-noise-cancellation>=0.2.5
 requests>=2.31.0
 mysql-connector-python>=8.2.0
 pydantic>=2.0.0
+tzdata

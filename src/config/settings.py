@@ -36,9 +36,9 @@ class PromptConfig:
     # Model Configuration
     LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-4o-mini")
     LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.5"))
-    TTS_PROVIDER: str = os.getenv("TTS_PROVIDER", "cartesia")
-    TTS_MODEL: str = os.getenv("TTS_MODEL", "gpt-4o-mini-tts")
-    TTS_VOICE: str = os.getenv("TTS_VOICE", "694f9389-aac1-45b6-b726-9d9369183238")
+    TTS_PROVIDER: str = os.getenv("TTS_PROVIDER", "openai")
+    TTS_MODEL: str = os.getenv("TTS_MODEL", "tts-1")
+    TTS_VOICE: str = os.getenv("TTS_VOICE", "nova")
 
     # Fallback Response
     FALLBACK_MESSAGE: str = os.getenv(

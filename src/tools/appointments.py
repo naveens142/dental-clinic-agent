@@ -9,6 +9,7 @@ Defines all function tools for the dental clinic agent including:
 """
 
 import logging
+import uuid
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from typing import Optional
@@ -31,6 +32,22 @@ _session_id_context: ContextVar[Optional[str]] = ContextVar('session_id', defaul
 
 # Context variable to store the last booked appointment details for quick cancel/reschedule
 _last_booking_context: ContextVar[Optional[dict]] = ContextVar('last_booking', default=None)
+
+
+def add_memo_context_to_response(base_response: str) -> str:
+    """
+    Enhance tool response with current memo context to remind the LLM of stored information.
+    This helps the agent remember patient details across the conversation.
+    """
+    try:
+        memo_context = get_memo_context_for_prompt()
+        if memo_context:
+            # Add memo context as a system reminder
+            return f"{base_response}\n\n[SYSTEM MEMO: {memo_context}]"
+        return base_response
+    except Exception as e:
+        logger.warning(f"Failed to get memo context: {e}")
+        return base_response
 
 def parse_booking_time(user_input: str, reference_date: str = None, timezone_name: str = "Asia/Kolkata") -> str:
     """
@@ -101,7 +118,7 @@ async def get_availability(
             start_weekday = start_dt.isoweekday()
             if start_weekday in [6, 7]:  # Saturday or Sunday
                 start_day = start_dt.strftime("%A, %B %d")
-                return f"Our dental clinic is closed on weekends ({start_day}). We're open Monday through Friday, 10:00 AM to 2:00 PM (Asia/Kolkata timezone). Would you like me to check availability for a weekday instead?"
+                return add_memo_context_to_response(f"Our dental clinic is closed on weekends ({start_day}). We're open Monday through Friday, 10:00 AM to 2:00 PM (Asia/Kolkata timezone). Would you like me to check availability for a weekday instead?")
     except Exception as e:
         logger.warning(f"Could not check weekend status: {e}")
     
@@ -124,7 +141,7 @@ async def get_availability(
 
 
 @function_tool(
-    description="Look up patient's existing booked appointments by name, phone, or email. Returns a list of confirmed upcoming appointments from CalCom."
+    description="Look up patient's existing booked appointments. CRITICAL: If patient provided email earlier in conversation, call this function WITHOUT the email parameter - it will auto-retrieve from memory. Only ask for email if this is the first time looking up appointments. Returns a list of confirmed upcoming appointments from CalCom."
 )
 async def check_existing_appointments(
     patient_name: Optional[str] = None,
@@ -153,7 +170,7 @@ async def check_existing_appointments(
     
     # ★ EMAIL IS MANDATORY ★
     if not email:
-        return "I need your email address to look up your appointments securely. Could you please provide your email address?"
+        return add_memo_context_to_response("I need your email address to look up your appointments securely. Could you please provide your email address?")
     
     # Store email in memo for future use
     memo.update_patient_email(email)
@@ -186,7 +203,7 @@ async def check_existing_appointments(
                 msg += f" and phone: {phone}"
             msg += ". Would you like to book a new appointment?"
             memo.set_appointments([])  # Store empty list
-            return msg
+            return add_memo_context_to_response(msg)
         
         logger.info(f"[CHECK_APPOINTMENTS] Found {len(bookings)} appointment(s) for {email}")
         
@@ -281,19 +298,19 @@ async def check_existing_appointments(
                     msg += f"{i}. {appt['name']}: {appt['time']} (ID: {appt['id']})\n"
                 msg += f"\nWould you like to reschedule or cancel any of these appointments?"
             
-            return msg
+            return add_memo_context_to_response(msg)
             
         except Exception as e:
             logger.warning(f"[CHECK_APPOINTMENTS] Error formatting appointment: {e}")
-            return f"I found your appointment (ID: {booking.get('uid', 'N/A')}) at {booking.get('start', 'Unknown')}. Would you like to reschedule or cancel it?"
+            return add_memo_context_to_response(f"I found your appointment (ID: {booking.get('uid', 'N/A')}) at {booking.get('start', 'Unknown')}. Would you like to reschedule or cancel it?")
             
     except Exception as e:
         logger.error(f"[CHECK_APPOINTMENTS] Error checking appointments: {e}", exc_info=True)
-        return f"I'm having trouble looking up your appointments at the moment. Could you please provide your email or phone number?"
+        return add_memo_context_to_response(f"I'm having trouble looking up your appointments at the moment. Could you please provide your email or phone number?")
 
 
 @function_tool(
-    description="Book a dental appointment for a patient. CRITICAL: You MUST collect patient name, phone number, email, preferred doctor, and appointment reason BEFORE calling this function. The start_time MUST be exactly one of the available slot times returned by get_availability. Parameters: name (required), start_time (required), phone (required), email (required), doctor (required - doctor name or 'Any Available'), reason (required - appointment reason/service type), timezone_name (optional), duration_minutes (optional)."
+    description="Book a dental appointment for a patient. CRITICAL: You MUST collect patient name, phone number, email, preferred doctor, and appointment reason BEFORE calling this function. The start_time parameter MUST be the EXACT ISO timestamp string from get_availability results (e.g., '2026-02-10T13:30:00+05:30'). DO NOT construct your own timestamp - ALWAYS copy the exact 'start' value from the availability slot the patient chose. Parameters: name (required), start_time (required - EXACT ISO timestamp from get_availability), phone (required), email (required), doctor (required - doctor name or 'Any Available'), reason (required - appointment reason/service type), timezone_name (optional), duration_minutes (optional)."
 )
 async def book_appointment(
     name: str,
@@ -312,7 +329,7 @@ async def book_appointment(
     
     Args:
         name: Patient's FULL name (required)
-        start_time: EXACT appointment start time in ISO format from get_availability (required)
+        start_time: EXACT ISO timestamp from get_availability (required) - e.g., "2026-02-10T13:30:00+05:30"
         phone: Patient's phone number (required for booking confirmation)
         email: Patient's email address (required for booking confirmation)
         doctor: Preferred doctor name or "Any Available" (required - provides context)
@@ -334,15 +351,15 @@ async def book_appointment(
     
     if not name or not name.strip():
         logger.warning("[BOOKING] Validation failed: name is empty")
-        return "I need your full name to book the appointment. Could you please provide your name?"
+        return add_memo_context_to_response("I need your full name to book the appointment. Could you please provide your name?")
     
     if not phone or not phone.strip():
         logger.warning(f"[BOOKING] Validation failed: phone is empty or None (phone={repr(phone)})")
-        return "I need your phone number to confirm the booking. Could you please provide your phone number?"
+        return add_memo_context_to_response("I need your phone number to confirm the booking. Could you please provide your phone number?")
     
     if not email or not email.strip():
         logger.warning(f"[BOOKING] Validation failed: email is empty or None (email={repr(email)})")
-        return "I need your email address to confirm the booking. Could you please provide your email address?"
+        return add_memo_context_to_response("I need your email address to confirm the booking. Could you please provide your email address?")
     
     # Store in memo for future use
     memo.update_patient_name(name)
@@ -350,6 +367,16 @@ async def book_appointment(
     memo.update_patient_email(email)
     
     logger.info(f"[BOOKING] ✓ Validation passed. Attempting to book appointment for {name} (doctor: {doctor}, reason: {reason}, phone: {phone}, email: {email}) at {start_time}")
+    
+    # ★ NATURAL INTERIM RESPONSE ★
+    # Send an acknowledgment message that shows the agent is processing
+    try:
+        confirm_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+        slot_time = confirm_dt.strftime("%I:%M %p").lstrip('0')
+        interim_msg = f"Got it! Let me book that for you on {slot_time}..."
+        logger.info(f"[BOOKING] Sending interim response: {interim_msg}")
+    except:
+        interim_msg = "Got it! Let me book that for you..."
     
     # Proceed with booking directly using the EXACT time from availability
     result = _book_appointment(name, email, start_time, timezone_name, duration_minutes)
@@ -387,15 +414,15 @@ async def book_appointment(
                     
                     if remaining_slots:
                         slots_text = "\n- ".join(remaining_slots)
-                        return f"I'm having trouble with that time slot at the moment. But here are all the available times for that day - you're welcome to try one of these:\n\n- {slots_text}\n\nWhich time works best for you?"
+                        return add_memo_context_to_response(f"I'm having trouble with that time slot at the moment. But here are all the available times for that day - you're welcome to try one of these:\n\n- {slots_text}\n\nWhich time works best for you?")
                     else:
-                        return "That time doesn't seem to be available right now. No problem though - I'd be happy to check availability for another day that works for you. What other dates would you like me to look at?"
+                        return add_memo_context_to_response("That time doesn't seem to be available right now. No problem though - I'd be happy to check availability for another day that works for you. What other dates would you like me to look at?")
             except Exception as e:
                 logger.error(f"Error re-checking availability: {e}")
             
-            return f"That time slot just became unavailable, but that's okay! Let me find some other great times for you on that day."
+            return add_memo_context_to_response(f"That time slot just became unavailable, but that's okay! Let me find some other great times for you on that day.")
         
-        return f"I'm having difficulty completing that booking at the moment. But don't worry - I'd love to help you find another appointment time that works just as well. Would you like me to suggest some alternatives?"
+        return add_memo_context_to_response(f"I'm having difficulty completing that booking at the moment. But don't worry - I'd love to help you find another appointment time that works just as well. Would you like me to suggest some alternatives?")
     
     # Success case - format the confirmation nicely
     logger.info(f"[BOOKING] Booking response: {result}")
@@ -444,10 +471,10 @@ async def book_appointment(
                         logger.info(f"[BOOKING] ✓ Recovered session_id from database: {session_id}")
                     else:
                         logger.error("[BOOKING] ✗✗✗ FATAL: No sessions found in database")
-                        return f"I'm experiencing a technical issue with the booking system. Please start a new session and try again."
+                        return add_memo_context_to_response(f"I'm experiencing a technical issue with the booking system. Please start a new session and try again.")
                 except Exception as e:
                     logger.error(f"[BOOKING] ✗✗✗ Error recovering session_id: {e}")
-                    return f"I'm experiencing a technical issue with the booking system. Please try again later."
+                    return add_memo_context_to_response(f"I'm experiencing a technical issue with the booking system. Please try again later.")
             
             logger.info(f"[BOOKING] Creating/retrieving user for phone={phone}, email={email}")
             
@@ -517,16 +544,16 @@ async def book_appointment(
             formatted_time = confirm_dt.strftime("%I:%M %p on %B %d, %Y").lstrip('0')
             
             # Build confirmation message with doctor and reason
-            msg = f"Wonderful! Your appointment is all confirmed for {formatted_time}."
+            msg = f"Perfect! Your appointment is all set for {formatted_time}."
             if doctor and doctor.strip() and doctor != "Any Available":
-                msg += f" You'll be seeing {doctor}."
+                msg += f" You'll be with {doctor}."
             if reason and reason.strip() and reason != "General Appointment":
-                msg += f" Appointment type: {reason}."
-            msg += f" Your booking ID is {booking_id} - please save this for any future changes or cancellations. We're looking forward to seeing you!"
+                msg += f" Service: {reason}."
+            msg += f" Your booking ID is {booking_id} — save this for any changes later. See you soon!"
             
             return msg
         except:
-            return f"Wonderful! Your appointment has been successfully booked. Your booking ID is {booking_id} - please save this for any future changes or cancellations. We're excited to help you!"
+            return add_memo_context_to_response(f"Perfect! Your appointment has been successfully booked. Your booking ID is {booking_id} — save this for any changes later. See you soon!")
     else:
         logger.error(f"[BOOKING] ✗✗✗ Booking failed or returned unexpected format: {result}")
     
@@ -535,7 +562,7 @@ async def book_appointment(
 
 
 @function_tool(
-    description="Cancel an existing appointment. Requires email for secure lookup. Can optionally filter by name or phone for family member appointments."
+    description="Cancel an existing appointment. CRITICAL: If patient provided email earlier, call WITHOUT patient_email - auto-retrieves from memory. For family bookings, provide patient_name (e.g., 'Rakesh Jain') and appointment_time auto-retrieves from stored appointments. Simple call: cancel_appointment(patient_name='Mohit Sharma')"
 )
 async def cancel_appointment(
     patient_name: Optional[str] = None,
@@ -580,7 +607,7 @@ async def cancel_appointment(
             logger.info(f"[CANCEL] Retrieved email from last_booking context: {patient_email}")
     
     if not patient_email:
-        return "I need your email address to cancel your appointment securely. Could you please provide your email address?"
+        return add_memo_context_to_response("I need your email address to cancel your appointment securely. Could you please provide your email address?")
     
     logger.info(f"[CANCEL] Using email for cancellation: {patient_email} (stored={stored_email is not None})")
     
@@ -590,6 +617,14 @@ async def cancel_appointment(
     # Check if user is referring to the appointment we just booked or found
     last_booking = _last_booking_context.get()
     logger.info(f"[CANCEL] Reusing email from earlier appointment lookup: {patient_email}")
+    
+    # CRITICAL: If patient_name is provided but appointment_time is not, find it from all_appointments
+    if patient_name and not appointment_time and last_booking and last_booking.get('all_appointments'):
+        for appt in last_booking['all_appointments']:
+            if appt.get('name', '').lower() == patient_name.lower():
+                appointment_time = appt.get('start')  # ISO format
+                logger.info(f"[CANCEL] Found appointment time for {patient_name} from context: {appointment_time}")
+                break
     
     if not patient_name and not appointment_time and not booking_uid and last_booking:
         # User just wants to cancel the appointment we just booked
@@ -619,20 +654,23 @@ async def cancel_appointment(
                 logger.info(f"[CANCEL] ✓ Found ACTIVE booking {booking_uid} in CalCom for {patient_email}")
                 # Proceed directly to cancellation - booking is confirmed
             else:
-                return f"I couldn't find an ACTIVE appointment for {patient_email} (name: {patient_name or 'any'}, phone: {phone or 'any'}) in our system. Could you please double-check? Or if you have your booking ID from the confirmation email, I can use that instead."
+                return add_memo_context_to_response(f"I couldn't find an ACTIVE appointment for {patient_email} (name: {patient_name or 'any'}, phone: {phone or 'any'}) in our system. Could you please double-check? Or if you have your booking ID from the confirmation email, I can use that instead.")
         except Exception as e:
             logger.error(f"[CANCEL] Error looking up booking in CalCom: {e}")
-            return "I'm having a small technical issue looking up your appointment. Could you provide your booking ID instead? You can find it in your confirmation email."
+            return add_memo_context_to_response("I'm having a small technical issue looking up your appointment. Could you provide your booking ID instead? You can find it in your confirmation email.")
     
     # If we have a booking UID (either from lookup or direct), cancel it
     if booking_uid and booking_uid.strip():
+        # ★ NATURAL INTERIM RESPONSE ★
+        logger.info(f"[CANCEL] ✓ Found appointment. Now processing cancellation for booking {booking_uid}")
+        
         result = _cancel_appointment(booking_uid, cancellation_reason)
         
         if isinstance(result, dict) and result.get("status") == "error":
             error_msg = result.get("error", "Unknown error")
             if "not found" in error_msg.lower() or "invalid" in error_msg.lower():
-                return f"I'm having trouble finding that booking. Could you double-check the email and date, or provide your booking ID from the confirmation email?"
-            return "I'd love to help cancel your appointment, but I'm having a small technical issue. Our team at the clinic can definitely help - would you like me to connect you with them?"
+                return add_memo_context_to_response(f"I'm having trouble finding that booking. Could you double-check the email and date, or provide your booking ID from the confirmation email?")
+            return add_memo_context_to_response("I'd love to help cancel your appointment, but I'm having a small technical issue. Our team at the clinic can definitely help - would you like me to connect you with them?")
         
         # Update database status
         try:
@@ -653,21 +691,21 @@ async def cancel_appointment(
         if booking_to_cancel:
             appt_time = booking_to_cancel.get('appointment_time', '')
             patient = booking_to_cancel.get('patient_name', patient_name or 'Your appointment')
-            return f"Perfect! Your appointment (ID: {booking_uid}) on {appt_time} has been successfully cancelled. You'll receive a confirmation message shortly. Is there anything else I can help you with today?"
+            return add_memo_context_to_response(f"Perfect! Your appointment (ID: {booking_uid}) on {appt_time} has been successfully cancelled. You'll receive a confirmation message shortly. Is there anything else I can help you with today?")
         
-        return f"Perfect! Your appointment (ID: {booking_uid}) has been successfully cancelled. You'll receive a confirmation message shortly. Is there anything else I can help you with today?"
+        return add_memo_context_to_response(f"Perfect! Your appointment (ID: {booking_uid}) has been successfully cancelled. You'll receive a confirmation message shortly. Is there anything else I can help you with today?")
     else:
         # No valid booking information provided
-        return """I'd be happy to help you cancel your appointment! I can do this in a couple of ways:
+        return add_memo_context_to_response("""I'd be happy to help you cancel your appointment! I can do this in a couple of ways:
 
 1. **Tell me your name and appointment time** - I'll look up your appointment and cancel it
 2. **If you have your booking ID** from your confirmation email, you can provide that
 
-Which option works better for you?"""
+Which option works better for you?""")
 
 
 @function_tool(
-    description="Reschedule an existing appointment. Can use a recent booking or lookup by name and current time. No need to provide booking ID."
+    description="Reschedule an existing appointment to a new time. CRITICAL: Auto-detects recent bookings from memory - for immediate rescheduling after booking, just call reschedule_appointment(new_start_time='ISO_timestamp'). For specific patients, provide patient_name. The new_start_time MUST be exact ISO from get_availability results. Simple calls: reschedule_appointment(new_start_time='2026-02-11T13:00:00+05:30') OR reschedule_appointment(patient_name='John Doe', new_start_time='ISO_timestamp')"
 )
 async def reschedule_appointment(
     patient_name: Optional[str] = None,
@@ -685,8 +723,8 @@ async def reschedule_appointment(
     ✓ MEMO-ENABLED: Reuses email from earlier lookup to avoid asking twice
     
     Args:
-        patient_email: Patient's email address (REQUIRED - enables secure server-side CalCom API filtering)
-        current_appointment_time: Current appointment date and time (optional - uses recent booking if not provided)
+        patient_email: Patient's email address (auto-retrieves from memo if not provided)
+        current_appointment_time: Current appointment date and time (optional - uses recent booking if not provided) 
         new_start_time: New appointment start time in ISO format (REQUIRED)
         patient_name: Patient's full name (optional - for family member lookup)
         phone: Patient's phone number (optional - for family member lookup)
@@ -697,22 +735,32 @@ async def reschedule_appointment(
     memo.set_action("reschedule")
     
     if not new_start_time:
-        return "I'd be happy to help you reschedule! What date and time would you like to move your appointment to?"
+        return add_memo_context_to_response("I'd be happy to help you reschedule! What date and time would you like to move your appointment to?")
     
-    # ★ EMAIL IS MANDATORY ★
-    # First check if email provided, if not try memo
+    # CRITICAL: Validate ISO timestamp format - must have timezone
+    try:
+        test_dt = datetime.fromisoformat(new_start_time.replace('Z', '+00:00'))
+        logger.info(f"[RESCHEDULE] ✓ Valid timestamp format: {new_start_time}")
+    except Exception as e:
+        logger.error(f"[RESCHEDULE] ✗ CRITICAL: Invalid timestamp {new_start_time}: {e}")
+        return add_memo_context_to_response(f"The time format seems incorrect. Please use one of the times from the available slots list. For example: use '12:00 PM' from the list, not a different format.")
+    
+    # ★ AUTO-RETRIEVE EMAIL FROM MEMO ★
     if not patient_email:
         patient_email = memo.get_patient_email()
+        logger.info(f"[RESCHEDULE] Auto-retrieved email from memo: {patient_email}")
     
-    if not patient_email:
-        return "I need your email address to reschedule your appointment securely. Could you please provide your email address?"
-    
-    # ★ REUSE PHONE FROM MEMO IF NOT PROVIDED ★
+    # ★ AUTO-RETRIEVE PHONE FROM MEMO ★
     if not phone:
         phone = memo.get_patient_phone()
+        logger.info(f"[RESCHEDULE] Auto-retrieved phone from memo: {phone}")
+    
+    # ★ AUTO-RETRIEVE PATIENT NAME FROM MEMO ★
+    if not patient_name:
+        patient_name = memo.get_patient_name()
+        logger.info(f"[RESCHEDULE] Auto-retrieved name from memo: {patient_name}")
     
     # ★ REUSE DOCTOR & REASON FROM ORIGINAL APPOINTMENT ★
-    # When rescheduling, automatically use the original appointment's doctor and service type
     doctor = memo.get_preferred_doctor()
     reason = memo.get_appointment_reason()
     
@@ -723,115 +771,141 @@ async def reschedule_appointment(
     
     logger.info(f"[RESCHEDULE] Using doctor={doctor} and reason={reason} from original appointment (memo)")
     
-    # Store email and phone in memo
-    memo.update_patient_email(patient_email)
-    if phone:
-        memo.update_patient_phone(phone)
-    
     # Initialize variables
     booking_uid = None
     booking_to_reschedule = None
     
-    # Check if user is referring to the appointment we found earlier
+    # ★ PRIORITY 1: Check if user wants to reschedule the RECENT booking ★
     last_booking = _last_booking_context.get()
+    logger.info(f"[RESCHEDULE] Last booking context: {last_booking}")
     
-    # CRITICAL: If email wasn't provided but we found an appointment earlier, REUSE it from context
-    if not patient_email and last_booking and last_booking.get('email'):
-        patient_email = last_booking.get('email')
-        memo.update_patient_email(patient_email)
-        logger.info(f"[RESCHEDULE] Reusing email from earlier appointment lookup: {patient_email}")
-    
-    if not patient_name and not current_appointment_time and last_booking:
-        # User just wants to reschedule the appointment we just booked
-        booking_uid = last_booking.get('booking_id')
-        patient_name = last_booking.get('name')
-        current_appointment_time = last_booking.get('appointment_time')
-        if not patient_email:  # Double-check email is set
-            patient_email = last_booking.get('email', 'patient@clinic.local')
-        booking_to_reschedule = last_booking
-        memo.update_patient_email(patient_email)
-        if patient_name:
-            memo.update_patient_name(patient_name)
-        logger.info(f"[RESCHEDULE] Using recently booked/found appointment: {booking_uid}")
+    # If NO specific patient details provided, use the most recent booking
+    if ((not patient_name or not current_appointment_time) and last_booking and 
+        last_booking.get('booking_id') and last_booking.get('email')):
         
-    # Find the current booking by email and time if provided and not using recent booking
-    elif patient_email and current_appointment_time and not booking_uid:
+        booking_uid = last_booking.get('booking_id')
+        patient_name = last_booking.get('name') or patient_name
+        patient_email = last_booking.get('email') or patient_email
+        phone = last_booking.get('phone') or phone
+        current_appointment_time = last_booking.get('appointment_time')
+        booking_to_reschedule = last_booking
+        
+        # Update memo with retrieved info
+        memo.update_patient_email(patient_email)
+        memo.update_patient_name(patient_name)
+        if phone:
+            memo.update_patient_phone(phone)
+        
+        logger.info(f"[RESCHEDULE] ✓ Using recent booking: {booking_uid} for {patient_name} ({patient_email})")
+        
+    # ★ PRIORITY 2: Look up in CalCom if we have email + time ★
+    elif patient_email and current_appointment_time:
         try:
-            logger.info(f"[RESCHEDULE] Looking up ACTIVE booking in CalCom for {patient_email} (with optional name and phone filters)")
+            logger.info(f"[RESCHEDULE] Looking up ACTIVE booking in CalCom for {patient_email}")
             
-            # Extract date from current_appointment_time if it's an ISO datetime
-            appointment_date = None
-            if 'T' in str(current_appointment_time) or '-' in str(current_appointment_time):
-                try:
-                    dt = datetime.fromisoformat(str(current_appointment_time).replace('Z', '+00:00'))
-                    appointment_date = dt.date().isoformat()
-                    logger.info(f"[RESCHEDULE] Extracted date from appointment_time: {appointment_date}")
-                except:
-                    pass
-            
-            # Use CalCom as ONLY source of truth
-            # Email-first with optional name, phone, and date filters
             booking_to_reschedule = _find_booking_by_patient_info(
                 patient_email=patient_email,
                 patient_name=patient_name,
                 patient_phone=phone,
-                appointment_time=current_appointment_time,
-                appointment_date=appointment_date  # Pass extracted date for more accurate matching
+                appointment_time=current_appointment_time
             )
             
-            if not booking_to_reschedule:
-                return f"I couldn't find an ACTIVE appointment for {patient_email} (name: {patient_name or 'any'}, phone: {phone or 'any'}) in CalCom. Could you please double-check the email or provide more details about the appointment time?"
-            
-            # Use CalCom UID as the booking ID
-            booking_uid = booking_to_reschedule.get('uid')
-            
-            # Store retrieved details in memo for future operations
-            if patient_name:
-                memo.update_patient_name(patient_name)
-            if phone:
-                memo.update_patient_phone(phone)
-            
-            # Get phone from booking if not already provided
-            if not phone:
-                booking_phone = booking_to_reschedule.get('phone')
-                if booking_phone:
-                    phone = booking_phone
-                    memo.update_patient_phone(phone)
-                    logger.info(f"[RESCHEDULE] ✓ Retrieved phone from booking: {phone}")
-            logger.info(f"[RESCHEDULE] ✓ Found ACTIVE booking in CalCom: {booking_uid} for {patient_email}")
-            
+            if booking_to_reschedule:
+                booking_uid = booking_to_reschedule.get('uid')
+                logger.info(f"[RESCHEDULE] ✓ Found ACTIVE booking {booking_uid} in CalCom for {patient_email}")
+            else:
+                return add_memo_context_to_response(f"I couldn't find an active appointment for {patient_email}. Could you double-check the details?")
+                
         except Exception as e:
-            logger.error(f"[RESCHEDULE] Error looking up booking in CalCom: {e}")
-            return "I'm having a small technical issue looking up your appointment in our system. Could you please try again?"
+            logger.error(f"[RESCHEDULE] Error looking up booking: {e}")
+            return add_memo_context_to_response("I'm having trouble looking up your appointment. Could you try again?")
     
-    # Proceed with rescheduling if we have all required info
+    # ★ PRIORITY 3: Need more info ★
+    else:
+        if not patient_email:
+            return add_memo_context_to_response("I need your email address to find and reschedule your appointment. Could you provide it?")
+        return add_memo_context_to_response("I need to find your current appointment first. Could you provide your appointment details?")
+    
+    # ★ PROCEED WITH RESCHEDULING IF WE FOUND THE BOOKING ★
     if not booking_uid:
-        return "I need to find your current appointment first. Could you please provide your name and current appointment time?"
+        return add_memo_context_to_response("I couldn't locate your current appointment. Could you provide more details?")
     
     # Use the booking_uid as CalCom UID (from our CalCom lookup)
     calcom_uid = booking_uid
     
     logger.info(f"[RESCHEDULE] Proceeding with reschedule. CalCom UID: {calcom_uid}")
     
+    # ★ NATURAL INTERIM RESPONSE ★
+    try:
+        new_dt = datetime.fromisoformat(new_start_time.replace("Z", "+00:00"))
+        new_slot_time = new_dt.strftime("%I:%M %p").lstrip('0')
+        interim_reschedule_msg = f"Got it! Let me reschedule your appointment to {new_slot_time}..."
+        logger.info(f"[RESCHEDULE] Interim response: {interim_reschedule_msg}")
+    except:
+        interim_reschedule_msg = "Got it! Let me reschedule that for you..."
+    
+    # Proceed with rescheduling if we have all required info
+    if not booking_uid:
+        return add_memo_context_to_response("I need to find your current appointment first. Could you please provide your name and current appointment time?")
+    
+    # Use the booking_uid as CalCom UID (from our CalCom lookup)
+    calcom_uid = booking_uid
+    
+    logger.info(f"[RESCHEDULE] Proceeding with reschedule. CalCom UID: {calcom_uid}")
+    
+    # ★ NATURAL INTERIM RESPONSE ★
+    try:
+        new_dt = datetime.fromisoformat(new_start_time.replace("Z", "+00:00"))
+        new_slot_time = new_dt.strftime("%I:%M %p").lstrip('0')
+        interim_reschedule_msg = f"Got it! Let me reschedule your appointment to {new_slot_time}..."
+        logger.info(f"[RESCHEDULE] Interim response: {interim_reschedule_msg}")
+    except:
+        interim_reschedule_msg = "Got it! Let me reschedule that for you..."
+    
     try:
         # First, cancel the existing appointment using Cal.com UID
         logger.info(f"[RESCHEDULE] Cancelling old booking {booking_uid} (calcom_uid={calcom_uid})")
         cancel_result = _cancel_appointment(calcom_uid, "Rescheduled to new time")
         
-        if isinstance(cancel_result, dict) and cancel_result.get("status") == "error":
+        # ★ CRITICAL: Proper error checking for cancellation response ★
+        # Check for error status OR missing data OR error key
+        is_cancel_error = (
+            isinstance(cancel_result, dict) and (
+                cancel_result.get("status") == "error" or
+                cancel_result.get("status") == "DRY_RUN" or
+                "error" in cancel_result or
+                (not cancel_result.get("data") and cancel_result.get("status") != "cancelled")
+            )
+        )
+        
+        if is_cancel_error:
             logger.error(f"[RESCHEDULE] Failed to cancel booking: {cancel_result}")
-            return f"I found your appointment (ID: {booking_uid}), but I'm having difficulty cancelling it for rescheduling. Would you like me to connect you with our team?"
+            return add_memo_context_to_response(f"I found your appointment (ID: {booking_uid}), but I'm having difficulty cancelling it for rescheduling. Would you like me to connect you with our team?")
         
         logger.info(f"[RESCHEDULE] ✓ Cancelled old booking {booking_uid}")
         
         # Then, book the new appointment
         logger.info(f"[RESCHEDULE] Booking new appointment at {new_start_time}")
+        
+        # CRITICAL: Detect if using old appointment time (causes duplicates)
+        if booking_to_reschedule:
+            old_time = booking_to_reschedule.get('start')
+            if old_time:
+                old_time_obj = datetime.fromisoformat(old_time.replace('Z', '+00:00'))
+                new_time_obj = datetime.fromisoformat(new_start_time.replace('Z', '+00:00'))
+                old_hour = old_time_obj.strftime('%H:%M')
+                new_hour = new_time_obj.strftime('%H:%M')
+                if old_hour == new_hour:
+                    logger.error(f"[RESCHEDULE] ✗✗✗ DUPLICATE ALERT: Using old time {old_hour}! Old: {old_time}, New: {new_start_time}")
+                    return add_memo_context_to_response(f"I notice you're choosing the same time (:{new_hour}) as your current appointment. This causes duplicates. Please choose a different time from the available slots.")
+                logger.info(f"[RESCHEDULE] ✓ Time changed: {old_hour} → {new_hour}")
+        
         book_result = _book_appointment(patient_name, patient_email, new_start_time, timezone_name, duration_minutes)
         
         if isinstance(book_result, dict) and book_result.get("status") == "error":
             error_msg = book_result.get("error", "Unknown error")
             logger.error(f"[RESCHEDULE] Failed to book new time: {error_msg}")
-            return f"I was able to cancel your old appointment (ID: {booking_uid}), but the new time slot is no longer available. Would you like to choose another time?"
+            return add_memo_context_to_response(f"I was able to cancel your old appointment (ID: {booking_uid}), but the new time slot is no longer available. Would you like to choose another time?")
         
         logger.info(f"[RESCHEDULE] ✓ Successfully booked new appointment")
         
@@ -840,17 +914,52 @@ async def reschedule_appointment(
         if isinstance(book_result, dict) and book_result.get("data"):
             new_booking_id = book_result.get("data", {}).get("uid")
         
-        # Update database for the reschedule
+        # ★ CRITICAL: Update database properly for the reschedule ★
         try:
             db = get_db()
             new_start_dt = datetime.fromisoformat(new_start_time.replace("Z", "+00:00"))
-            db.reschedule_booking(booking_uid, new_start_dt, reason="Rescheduled by patient via agent")
-            logger.info(f"[RESCHEDULE] ✓ Updated database for booking {booking_uid}")
+            new_end_dt = new_start_dt + timedelta(minutes=duration_minutes)
             
-            # NEW: Upsert user contact and mark sync as rescheduled
+            # ★ Mark OLD booking as CANCELLED (this is what was missing!) ★
+            logger.info(f"[RESCHEDULE] Marking OLD booking {booking_uid} as cancelled in database")
+            cursor_conn = db.get_connection()
+            cursor_db = cursor_conn.cursor()
+            cursor_db.execute(
+                "UPDATE bookings SET status = %s, notes = %s WHERE calcom_uid = %s OR booking_id = %s",
+                ('cancelled', 'Cancelled due to reschedule by patient', booking_uid, booking_uid)
+            )
+            cursor_conn.commit()
+            cursor_db.close()
+            cursor_conn.close()
+            logger.info(f"[RESCHEDULE] ✓ Marked old booking {booking_uid} as cancelled")
+            
+            # ★ Create NEW booking record with new Cal.com UID ★
+            if new_booking_id and patient_name and patient_email:
+                logger.info(f"[RESCHEDULE] Creating NEW booking record with calcom_uid={new_booking_id}")
+                try:
+                    # Get or create user for the new booking
+                    user_id = db.get_or_create_user(phone=phone, name=patient_name, email=patient_email)
+                    session_id = _session_id_context.get() or f"sess_reschedule_{uuid.uuid4().hex[:8]}"
+                    
+                    # Create new booking entry
+                    new_local_booking_id = db.create_booking(
+                        session_id=session_id,
+                        user_id=user_id,
+                        appointment_start=new_start_dt,
+                        appointment_end=new_end_dt,
+                        service_type=reason,
+                        notes=f"Rescheduled from {current_appointment_time}",
+                        calcom_uid=new_booking_id
+                    )
+                    logger.info(f"[RESCHEDULE] ✓ Created NEW local booking record: {new_local_booking_id} with calcom_uid={new_booking_id}")
+                    new_booking_id = new_local_booking_id
+                except Exception as e:
+                    logger.error(f"[RESCHEDULE] Warning: Could not create new booking record: {e}")
+            
+            # Update user contact
             try:
-                db.upsert_user_contact(name=patient_name, phone=phone, email=patient_email, calcom_uid=booking_uid)
-                db.mark_calcom_sync(booking_uid, booking_uid, sync_status="rescheduled")
+                db.upsert_user_contact(name=patient_name, phone=phone, email=patient_email, calcom_uid=new_booking_id or booking_uid)
+                db.mark_calcom_sync(new_booking_id or booking_uid, new_booking_id or booking_uid, sync_status="rescheduled")
                 logger.info(f"[RESCHEDULE] ✓ Synced user contact and marked booking as rescheduled")
             except Exception as e:
                 logger.error(f"[RESCHEDULE] Warning: Could not sync user contact or mark sync: {e}")
@@ -863,23 +972,17 @@ async def reschedule_appointment(
         except:
             new_time_formatted = new_start_time
         
-        confirmation = f"Excellent! Your appointment has been successfully rescheduled!\n\n"
-        confirmation += f"Old appointment (ID: {booking_uid}) - Cancelled\n"
-        if new_booking_id:
-            confirmation += f"New appointment (ID: {new_booking_id}) - {new_time_formatted}\n\n"
-        else:
-            confirmation += f"New appointment - {new_time_formatted}\n\n"
-        confirmation += f"You'll receive confirmation messages shortly. Is there anything else I can help you with?"
+        confirmation = f"Perfect! All set — your appointment has been rescheduled to {new_time_formatted}. Your old appointment has been cancelled, and you'll get confirmation shortly. Is there anything else?"
         
         logger.info(f"[RESCHEDULE] ✓ Reschedule complete: {booking_uid} → {new_booking_id}")
         return confirmation
         
     except Exception as e:
         logger.error(f"[RESCHEDULE] Unexpected error during reschedule: {e}")
-        return "I'm experiencing a technical issue with the rescheduling. Please try again or contact our team for assistance."
+        return add_memo_context_to_response("I'm experiencing a technical issue with the rescheduling. Please try again or contact our team for assistance.")
     
     # Need more information
-    return f"I need a bit more information to complete the reschedule. Could you please provide your email address?"
+    return add_memo_context_to_response(f"I need a bit more information to complete the reschedule. Could you please provide your email address?")
 
 
 # ============================================================================

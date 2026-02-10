@@ -69,7 +69,6 @@ class DatabaseService:
         except Error as e:
             logger.error(f"Database connection error: {e}")
             raise
-            raise
     
     # ========== SESSION MANAGEMENT ==========
     
@@ -377,11 +376,11 @@ class DatabaseService:
             
             query = """
             INSERT INTO conversation_logs 
-            (session_id, user_id, speaker, message_text, timestamp, audio_duration_seconds)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            (session_id, user_id, speaker, message_text, timestamp)
+            VALUES (%s, %s, %s, %s, %s)
             """
             cursor.execute(query, (
-                session_id, user_id, speaker, message_text, datetime.now(), audio_duration
+                session_id, user_id, speaker, message_text, datetime.now()
             ))
             conn.commit()
             
@@ -430,7 +429,7 @@ class DatabaseService:
             cursor = conn.cursor(dictionary=True)
             
             query = """
-            SELECT message_id, speaker, message_text, timestamp, audio_duration_seconds
+            SELECT message_id, speaker, message_text, timestamp
             FROM conversation_logs
             WHERE session_id = %s
             ORDER BY timestamp ASC
@@ -943,8 +942,6 @@ class DatabaseService:
             if conn:
                 conn.close()
             logger.info(f"[LOG_HISTORY] Connection closed")
-            cursor.close()
-            conn.close()
     
     def update_session_analytics(self):
         """
@@ -973,37 +970,61 @@ class DatabaseService:
             session_result = cursor.fetchone()
             logger.info(f"[ANALYTICS] Session result: {session_result}")
             
-            # Get unique users from bookings for today
+            # Get unique users from bookings for today (gracefully handle missing table)
             logger.info(f"[ANALYTICS] Fetching unique users from bookings")
-            cursor.execute("""
-                SELECT COUNT(DISTINCT user_id) as total_users
-                FROM bookings
-                WHERE DATE(created_at) = %s
-            """, (today,))
-            users_result = cursor.fetchone()
-            logger.info(f"[ANALYTICS] Users result: {users_result}")
+            try:
+                cursor.execute("""
+                    SELECT COUNT(DISTINCT user_id) as total_users
+                    FROM bookings
+                    WHERE DATE(created_at) = %s
+                """, (today,))
+                users_result = cursor.fetchone()
+                logger.info(f"[ANALYTICS] Users result: {users_result}")
+            except mysql.connector.errors.ProgrammingError as e:
+                if "doesn't exist" in str(e):
+                    logger.warning(f"[ANALYTICS] Bookings table doesn't exist, using default values")
+                    users_result = {'total_users': 0}
+                else:
+                    raise
             
-            # Get booking stats for today
+            # Get booking stats for today (gracefully handle missing table)
             logger.info(f"[ANALYTICS] Fetching booking stats")
-            cursor.execute("""
-                SELECT 
-                    COUNT(*) as total_bookings,
-                    SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) as successful_bookings,
-                    SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled_bookings
-                FROM bookings
-                WHERE DATE(created_at) = %s
-            """, (today,))
-            booking_result = cursor.fetchone()
-            logger.info(f"[ANALYTICS] Booking result: {booking_result}")
+            try:
+                cursor.execute("""
+                    SELECT 
+                        COUNT(*) as total_bookings,
+                        SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) as successful_bookings,
+                        SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled_bookings
+                    FROM bookings
+                    WHERE DATE(created_at) = %s
+                """, (today,))
+                booking_result = cursor.fetchone()
+                logger.info(f"[ANALYTICS] Booking result: {booking_result}")
+            except mysql.connector.errors.ProgrammingError as e:
+                if "doesn't exist" in str(e):
+                    logger.warning(f"[ANALYTICS] Bookings table doesn't exist, using default values")
+                    booking_result = {'total_bookings': 0, 'successful_bookings': 0, 'cancelled_bookings': 0}
+                else:
+                    raise
             
-            # Check if record exists for today
-            logger.info(f"[ANALYTICS] Checking for existing analytics record")
-            cursor.execute(
-                "SELECT analytics_id FROM session_analytics WHERE date = %s",
-                (today,)
-            )
-            existing = cursor.fetchone()
-            logger.info(f"[ANALYTICS] Existing record: {existing}")
+            # Check if analytics table exists and has the expected schema
+            # Try to check for existing record
+            try:
+                logger.info(f"[ANALYTICS] Checking for existing analytics record")
+                cursor.execute(
+                    "SELECT analytics_date FROM session_analytics WHERE DATE(analytics_date) = %s",
+                    (today,)
+                )
+                existing = cursor.fetchone()
+                logger.info(f"[ANALYTICS] Existing record: {existing}")
+            except mysql.connector.errors.ProgrammingError as e:
+                # ★ CRITICAL: Handle missing column or table gracefully ★
+                if "Unknown column" in str(e) or "doesn't exist" in str(e):
+                    logger.warning(f"[ANALYTICS] ⚠ Session analytics table missing or has schema issues: {e}")
+                    logger.warning(f"[ANALYTICS] Skipping analytics update. This is non-critical.")
+                    return  # Exit gracefully without crashing
+                else:
+                    raise
             
             total_sessions = session_result['total_sessions'] or 0
             total_users = users_result['total_users'] or 0
@@ -1021,8 +1042,9 @@ class DatabaseService:
                 UPDATE session_analytics 
                 SET total_sessions = %s, total_users = %s, total_bookings = %s,
                     successful_bookings = %s, cancelled_bookings = %s,
-                    avg_session_duration_seconds = %s
-                WHERE date = %s
+                    avg_session_duration_seconds = %s,
+                    updated_at = NOW()
+                WHERE DATE(analytics_date) = %s
                 """
                 cursor.execute(query, (
                     total_sessions, total_users, total_bookings,
@@ -1034,12 +1056,12 @@ class DatabaseService:
                 logger.info(f"[ANALYTICS] Inserting new record")
                 query = """
                 INSERT INTO session_analytics 
-                (date, total_sessions, total_users, total_bookings, successful_bookings, 
+                (analytics_date, total_sessions, total_users, total_bookings, successful_bookings, 
                  cancelled_bookings, avg_session_duration_seconds)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                VALUES (NOW(), %s, %s, %s, %s, %s, %s)
                 """
                 cursor.execute(query, (
-                    today, total_sessions, total_users, total_bookings,
+                    total_sessions, total_users, total_bookings,
                     successful_bookings, cancelled_bookings, avg_duration
                 ))
                 logger.info(f"[ANALYTICS] INSERT successful, affected rows: {cursor.rowcount}")
@@ -1048,6 +1070,16 @@ class DatabaseService:
             logger.info(f"[ANALYTICS] ✓ Transaction committed. Updated analytics for {today}: "
                        f"sessions={total_sessions}, users={total_users}, bookings={total_bookings}")
             
+        except mysql.connector.errors.ProgrammingError as e:
+            # ★ Handle all schema-related errors gracefully ★
+            if "Unknown column" in str(e) or "doesn't exist" in str(e):
+                logger.warning(f"[ANALYTICS] ⚠ Schema issue (non-critical): {e}")
+                if conn:
+                    conn.rollback()
+            else:
+                logger.error(f"[ANALYTICS] ✗ Error updating session analytics: {e}", exc_info=True)
+                if conn:
+                    conn.rollback()
         except Error as e:
             logger.error(f"[ANALYTICS] ✗ Error updating session analytics: {e}", exc_info=True)
             if conn:
@@ -1058,8 +1090,6 @@ class DatabaseService:
             if conn:
                 conn.close()
             logger.info(f"[ANALYTICS] Connection closed")
-            cursor.close()
-            conn.close()
     
     def get_session_stats(self, date: datetime = None) -> Dict[str, Any]:
         """Get statistics for a specific date."""

@@ -139,9 +139,6 @@ service-account*.json
 dist/
 build/
 node_modules/
-
-# LLM/ML Model files (if cached)
-models/
 *.bin
 *.pt
 *.pth

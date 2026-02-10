@@ -27,4 +27,4 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
 # Run agent
-CMD ["python", "agent.py"]
+CMD ["python", "src/agent.py"]

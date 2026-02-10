@@ -981,7 +981,7 @@ def cancel_appointment(
         cancellation_reason: Optional reason for cancellation
         
     Returns:
-        Dict containing cancellation response
+        Dict containing cancellation response with explicit success/error status
     """
     if CALCOM_DRY_RUN:
         logger.warning("CALCOM_DRY_RUN enabled — cancellation skipped")
@@ -997,19 +997,19 @@ def cancel_appointment(
     cancel_headers = HEADERS.copy()
     cancel_headers["cal-api-version"] = "2024-08-13"
     
-    logger.info(f"Cancelling booking {booking_uid}")
+    logger.info(f"[CANCEL_APPOINTMENT] Cancelling booking {booking_uid}")
     
     response = requests.post(url, headers=cancel_headers, json=payload)
     
     if not response.ok:
-        logger.error(f"Cancellation failed with status {response.status_code}")
-        logger.error(f"Response text: {response.text}")
+        logger.error(f"[CANCEL_APPOINTMENT] Cancellation failed with status {response.status_code}")
+        logger.error(f"[CANCEL_APPOINTMENT] Response text: {response.text}")
         
         # Parse error message for user-friendly response
         error_message = "Cancellation failed"
         try:
             error_json = response.json()
-            logger.error(f"Error JSON: {error_json}")
+            logger.error(f"[CANCEL_APPOINTMENT] Error JSON: {error_json}")
             
             # Extract the actual error message
             if "error" in error_json and "message" in error_json["error"]:
@@ -1019,11 +1019,24 @@ def cancel_appointment(
         except:
             error_message = response.text
         
-        # Return error as a dict instead of raising exception
+        # Return error as a dict with explicit error status
         return {
             "status": "error",
             "error": error_message,
             "details": f"Cal.com API returned status {response.status_code}"
         }
     
-    return response.json()
+    # Successfully cancelled - add explicit success status
+    response_data = response.json()
+    logger.info(f"[CANCEL_APPOINTMENT] ✓ Successfully cancelled booking {booking_uid}")
+    logger.info(f"[CANCEL_APPOINTMENT] Response: {response_data}")
+    
+    # Ensure response has a clear success indicator
+    if isinstance(response_data, dict):
+        # Check if response indicates cancelled status
+        if response_data.get("data", {}).get("status") == "cancelled":
+            response_data["status"] = "success"
+        elif "status" not in response_data:
+            response_data["status"] = "success"
+    
+    return response_data
