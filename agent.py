@@ -7,15 +7,17 @@ import os
 import sys
 import json
 import logging
+import asyncio
 from datetime import datetime
 from dotenv import load_dotenv
 
-# Add parent directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add current directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from livekit.agents import WorkerOptions, cli, JobContext
 from livekit.agents.voice import Agent, AgentSession, room_io
-from livekit.plugins import deepgram, openai, noise_cancellation
+from livekit.agents.llm import ChatMessage
+from livekit.plugins import deepgram, openai
 
 
 from src.tools.appointments import (
@@ -52,6 +54,9 @@ REQUIRED_ENV_VARS = [
     "DB_HOST",
     "DB_USER",
     "DB_NAME",
+    "DB_PASSWORD",
+    "CALCOM_API_KEY",
+    "CALCOM_EVENT_TYPE_ID"
 ]
 
 def validate_environment() -> None:
@@ -75,9 +80,6 @@ def get_clinic_information() -> str:
             f"Please contact us directly.\n{cfg.FALLBACK_MESSAGE}"
         )
 
-# ---------------------------------------------------------------------------
-# AGENT ENTRYPOINT (NEW LIVEKIT MODEL)
-# ---------------------------------------------------------------------------
 
 # AGENT ENTRYPOINT (NEW LIVEKIT MODEL)
 # ---------------------------------------------------------------------------
@@ -90,12 +92,17 @@ async def dental_clinic_agent(ctx: JobContext):
     validate_environment()
 
     db = None
+    session = None
     session_id = None
     start_time = datetime.utcnow()
 
     try:
         logger.info("Connecting to room...")
-        # ctx is already connected in JobContext
+        await ctx.connect()
+
+        # Wait for the first participant to join
+        participant = await ctx.wait_for_participant()
+        logger.info(f"Connected to participant: {participant.identity}")
 
         db = get_db()
         session_id = db.create_session(ctx.room.name)
@@ -111,10 +118,14 @@ async def dental_clinic_agent(ctx: JobContext):
             f"{get_agent_instruction()}\n\n{get_clinic_information()}"
         )
 
+        # Select TTS provider (only OpenAI supported)
+        tts_plugin = openai.TTS(voice=config.TTS_VOICE)
+
+        # Create the Agent instance with all its components
         agent = Agent(
             instructions=full_instruction,
             stt=deepgram.STT(
-                model="nova-3",
+                model="nova-2",
                 language="en",
                 smart_format=True,
                 interim_results=True,
@@ -123,44 +134,26 @@ async def dental_clinic_agent(ctx: JobContext):
                 model=config.LLM_MODEL,
                 temperature=config.LLM_TEMPERATURE,
             ),
-            tts=openai.TTS(
-                voice=config.TTS_VOICE,
-            ),
+            tts=tts_plugin,
             tools=[
                 get_availability,
                 check_existing_appointments,
                 book_appointment,
                 cancel_appointment,
                 reschedule_appointment,
-            ],
+            ]
         )
 
-        # Create agent session and connect to context
-        session = AgentSession(
-            stt=deepgram.STT(
-                model="nova-3",
-                language="en",
-                smart_format=True,
-                interim_results=True,
-            ),
-            llm=openai.LLM(
-                model=config.LLM_MODEL,
-                temperature=config.LLM_TEMPERATURE,
-            ),
-            tts=openai.TTS(
-                voice=config.TTS_VOICE,
-            ),
-        )
-        
-        session.update_agent(agent)
-        run_result = await session.start(
+        # Initialize the session and start it for this participant
+        session = AgentSession()
+        await session.start(
             agent,
             room=ctx.room,
             room_input_options=room_io.RoomInputOptions(
-                noise_cancellation=noise_cancellation.NC(),
-                close_on_disconnect=False,
-            ),
+                participant_identity=participant.identity
+            )
         )
+
 
         greeting = (
             f"Hello! I'm {config.RECEPTIONIST_NAME} from "
@@ -182,15 +175,24 @@ async def dental_clinic_agent(ctx: JobContext):
 
         logger.info("Agent started successfully")
 
-        # Wait for the session to complete
-        if run_result:
-            await run_result
+        # Keep the session alive until the room disconnects or the job is cancelled
+        logger.info("Agent session running...")
+        while ctx.room.isconnected:
+            await asyncio.sleep(1)
 
     except Exception as e:
         logger.error("Agent crashed", exc_info=True)
         raise
 
     finally:
+        # Proper cleanup: close session and disconnect room
+        if session:
+            try:
+                await session.aclose()
+                logger.info("Agent session closed")
+            except Exception as e:
+                logger.warning(f"Error closing agent session: {e}")
+
         # Clear conversation memo to prevent memory leaks
         try:
             clear_memo()
@@ -216,6 +218,12 @@ async def dental_clinic_agent(ctx: JobContext):
 
         elif session_id:
             logger.info(f"Session {session_id} ended (no DB connection for cleanup)")
+        
+        # Final shutdown call to ensure room disconnection
+        try:
+            ctx.shutdown()
+        except Exception:
+            pass
 
 # ---------------------------------------------------------------------------
 # MAIN (REQUIRED FOR LIVEKIT CLOUD)
@@ -227,9 +235,11 @@ if __name__ == "__main__":
         logger.info("Starting ToothFairy Dental Clinic Agent")
         cli.run_app(
             WorkerOptions(
-                entrypoint_fnc=dental_clinic_agent
+                entrypoint_fnc=dental_clinic_agent,
+                agent_name=os.getenv("LIVEKIT_AGENT_NAME", "toothfairy-dental-agent")
             )
         )
     except Exception:
         logger.critical("Agent failed to start", exc_info=True)
         raise
+

@@ -38,7 +38,7 @@ class PromptConfig:
     LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.5"))
     TTS_PROVIDER: str = os.getenv("TTS_PROVIDER", "openai")
     TTS_MODEL: str = os.getenv("TTS_MODEL", "tts-1")
-    TTS_VOICE: str = os.getenv("TTS_VOICE", "nova")
+    TTS_VOICE: str = os.getenv("TTS_VOICE", "nova")  # OpenAI voices: alloy, echo, fern, nova, onyx, shimmer
 
     # Fallback Response
     FALLBACK_MESSAGE: str = os.getenv(
@@ -49,7 +49,7 @@ class PromptConfig:
 
 # Deepgram STT Configuration
 DEEPGRAM_CONFIG = {
-    "model": "nova-3",
+    "model": "nova-2",
     "language": "en",
     "smart_format": True,
     "interim_results": True

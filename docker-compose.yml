@@ -32,9 +32,18 @@ services:
       - DB_NAME=${DB_NAME}
       - DB_PORT=${DB_PORT:-3306}
       
+      # Cal.com Configuration
+      - CALCOM_API_KEY=${CALCOM_API_KEY}
+      - CALCOM_EVENT_TYPE_ID=${CALCOM_EVENT_TYPE_ID}
+      - CALCOM_BASE_URL=${CALCOM_BASE_URL:-https://api.cal.com/v2}
+      - CALCOM_DRY_RUN=${CALCOM_DRY_RUN:-true}
+
       # Logging
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       
+      # Agent Identifier
+      - LIVEKIT_AGENT_NAME=${LIVEKIT_AGENT_NAME:-toothfairy-dental-agent}
+
       # Python
       - PYTHONUNBUFFERED=1
     
